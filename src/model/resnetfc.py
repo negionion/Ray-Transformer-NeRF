@@ -43,7 +43,7 @@ class ResnetBlockFC(nn.Module):
         elif beta == 0:
             self.activation = nn.ReLU()
         elif beta < 0:
-            self.activation = nn.GeLU()
+            self.activation = nn.GELU()
             
 
         if size_in == size_out:
@@ -132,7 +132,7 @@ class ResnetFC(nn.Module):
         elif beta == 0:
             self.activation = nn.ReLU()
         elif beta < 0:
-            self.activation = nn.GeLU()
+            self.activation = nn.GELU()
 
     def forward(self, zx, combine_inner_dims=(1,), combine_index=None, dim_size=None):
         """
