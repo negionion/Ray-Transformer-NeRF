@@ -115,7 +115,7 @@ class PixelNeRFTrainer(trainlib.Trainer):
         if save_ckpt_step == 0:
             torch.save(renderer.state_dict(), self.renderer_state_path)
         else:
-            torch.save(renderer.state_dict(), (self.renderer_state_path + save_ckpt_step))
+            torch.save(renderer.state_dict(), "%s%s" % (self.renderer_state_path, save_ckpt_step))
 
     def calc_losses(self, data, is_train=True, global_step=0):
         if "images" not in data:

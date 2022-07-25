@@ -307,12 +307,15 @@ class PixelNeRFNet(torch.nn.Module):
         if opt_init:
             ckpt_name = "pixel_nerf_init"
         elif ckpt_step > 0:
+            
+            if not osp.exists("%s/%s/%s/%s" % (os.getcwd(), args.checkpoints_path, args.name, ckpt_step,)):
+                os.mkdir("%s/%s/%s/%s" % (os.getcwd(), args.checkpoints_path, args.name, ckpt_step,))
+                
             ckpt_name =  "%s/%s" % (ckpt_step, "pixel_nerf_latest",)
         else:
             ckpt_name = "pixel_nerf_latest"
 
         backup_name = "pixel_nerf_init_backup" if opt_init else "pixel_nerf_backup"
-
         ckpt_path = osp.join(args.checkpoints_path, args.name, ckpt_name)
         ckpt_backup_path = osp.join(args.checkpoints_path, args.name, backup_name)
 

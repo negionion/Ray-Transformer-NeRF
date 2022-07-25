@@ -211,6 +211,7 @@ class Trainer:
 
                     if step_id % self.save_ckpt_interval == 0 and (epoch > 0 or batch > 0):
                         print("saving ckpt")
+                    
                         if self.managed_weight_saving:
                             self.net.save_weights(self.args, step_id)
                         else:
