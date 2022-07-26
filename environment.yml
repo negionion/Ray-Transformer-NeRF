@@ -25,4 +25,3 @@ dependencies:
     - torchaudio==0.8.1
     - torchsummary==1.5.1
     - torchvision==0.9.1+cu111
-prefix: /home/negi/anaconda3/envs/pixelnerf
