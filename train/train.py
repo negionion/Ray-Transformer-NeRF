@@ -111,8 +111,11 @@ class PixelNeRFTrainer(trainlib.Trainer):
     def post_batch(self, epoch, batch):
         renderer.sched_step(args.batch_size)
 
-    def extra_save_state(self):
-        torch.save(renderer.state_dict(), self.renderer_state_path)
+    def extra_save_state(self, save_ckpt_step=0):
+        if save_ckpt_step == 0:
+            torch.save(renderer.state_dict(), self.renderer_state_path)
+        else:
+            torch.save(renderer.state_dict(), "%s%s" % (self.renderer_state_path, save_ckpt_step))
 
     def calc_losses(self, data, is_train=True, global_step=0):
         if "images" not in data:

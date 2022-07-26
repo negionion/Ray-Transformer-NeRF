@@ -31,6 +31,7 @@ class Trainer:
         self.num_total_batches = len(self.train_dataset)
         self.exp_name = args.name
         self.save_interval = conf.get_int("save_interval")
+        self.save_ckpt_interval = conf.get_int("save_ckpt_interval")
         self.print_interval = conf.get_int("print_interval")
         self.vis_interval = conf.get_int("vis_interval")
         self.eval_interval = conf.get_int("eval_interval")
@@ -73,6 +74,11 @@ class Trainer:
             self.args.checkpoints_path,
             self.args.name,
         )
+        self.save_ckpt_path = "%s/%s" % (
+            self.args.checkpoints_path,
+            self.args.name,
+        )
+        
         self.start_iter_id = 0
         if args.resume:
             if os.path.exists(self.optim_state_path):
@@ -167,6 +173,8 @@ class Trainer:
                             epoch,
                             "B",
                             batch,
+                            "STEP",
+                            step_id,
                             loss_str,
                             " lr",
                             self.optim.param_groups[0]["lr"],
@@ -200,6 +208,23 @@ class Trainer:
                             )
                         torch.save({"iter": step_id + 1}, self.iter_state_path)
                         self.extra_save_state()
+
+                    if step_id % self.save_ckpt_interval == 0 and (epoch > 0 or batch > 0):
+                        print("saving ckpt")
+                    
+                        if self.managed_weight_saving:
+                            self.net.save_weights(self.args, step_id)
+                        else:
+                            torch.save(
+                                self.net.state_dict(), "%s/%s/%s" % (self.save_ckpt_path, step_id, "_net",)
+                            )
+                        torch.save(self.optim.state_dict(), "%s/%s/%s" % (self.save_ckpt_path, step_id, "_optim",))
+                        if self.lr_scheduler is not None:
+                            torch.save(
+                                self.lr_scheduler.state_dict(), "%s/%s/%s" % (self.save_ckpt_path, step_id, "_lrsched",)
+                            )
+                        torch.save({"iter": step_id + 1}, "%s/%s/%s" % (self.save_ckpt_path, step_id, "_iter",))
+                        self.extra_save_state(step_id)
 
                     if batch % self.vis_interval == 0:
                         print("generating visualization")

@@ -40,8 +40,11 @@ class ResnetBlockFC(nn.Module):
 
         if beta > 0:
             self.activation = nn.Softplus(beta=beta)
-        else:
+        elif beta == 0:
             self.activation = nn.ReLU()
+        elif beta < 0:
+            self.activation = nn.GELU()
+            
 
         if size_in == size_out:
             self.shortcut = None
@@ -126,8 +129,10 @@ class ResnetFC(nn.Module):
 
         if beta > 0:
             self.activation = nn.Softplus(beta=beta)
-        else:
+        elif beta == 0:
             self.activation = nn.ReLU()
+        elif beta < 0:
+            self.activation = nn.GELU()
 
     def forward(self, zx, combine_inner_dims=(1,), combine_index=None, dim_size=None):
         """

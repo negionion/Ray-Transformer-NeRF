@@ -68,9 +68,9 @@ class PixelNeRFNet(torch.nn.Module):
         d_out = 4
 
         self.latent_size = self.encoder.latent_size
-        self.mlp_coarse = make_mlp(conf["mlp_coarse"], d_in, d_latent, d_out=d_out)
+        self.mlp_coarse = make_mlp(conf["our_mlp_coarse"], d_in, d_latent, d_out=d_out)
         self.mlp_fine = make_mlp(
-            conf["mlp_fine"], d_in, d_latent, d_out=d_out, allow_empty=True
+            conf["our_mlp_fine"], d_in, d_latent, d_out=d_out, allow_empty=True
         )
         # Note: this is world -> camera, and bottom row is omitted
         self.register_buffer("poses", torch.empty(1, 3, 4), persistent=False)
@@ -297,16 +297,25 @@ class PixelNeRFNet(torch.nn.Module):
             )
         return self
 
-    def save_weights(self, args, opt_init=False):
+    def save_weights(self, args, ckpt_step=0, opt_init=False):
         """
         Helper for saving weights according to argparse arguments
         :param opt_init if true, saves from init checkpoint instead of usual
         """
         from shutil import copyfile
 
-        ckpt_name = "pixel_nerf_init" if opt_init else "pixel_nerf_latest"
-        backup_name = "pixel_nerf_init_backup" if opt_init else "pixel_nerf_backup"
+        if opt_init:
+            ckpt_name = "pixel_nerf_init"
+        elif ckpt_step > 0:
+            
+            if not osp.exists("%s/%s/%s/%s" % (os.getcwd(), args.checkpoints_path, args.name, ckpt_step,)):
+                os.mkdir("%s/%s/%s/%s" % (os.getcwd(), args.checkpoints_path, args.name, ckpt_step,))
+                
+            ckpt_name =  "%s/%s" % (ckpt_step, "pixel_nerf_latest",)
+        else:
+            ckpt_name = "pixel_nerf_latest"
 
+        backup_name = "pixel_nerf_init_backup" if opt_init else "pixel_nerf_backup"
         ckpt_path = osp.join(args.checkpoints_path, args.name, ckpt_name)
         ckpt_backup_path = osp.join(args.checkpoints_path, args.name, backup_name)
 
