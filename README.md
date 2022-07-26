@@ -17,6 +17,7 @@ To start, we prefer creating the environment using conda:
 ```sh
 conda env create -f environment.yml
 conda activate pixelnerf
+pip install torch==1.11.0+cu113 torchvision==0.12.0+cu113 torchaudio==0.11.0 --extra-index-url https://download.pytorch.org/whl/cu113
 ```
 Please make sure you have up-to-date NVIDIA drivers supporting CUDA 10.2 at least.
 

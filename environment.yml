@@ -4,7 +4,7 @@ channels:
   - pytorch
   - defaults
 dependencies:
-  - python>=3.8
+  - python=3.8
   - pip
   - numpy=1.22.3
   - scikit-image=0.17.2
@@ -21,7 +21,3 @@ dependencies:
     - pretrainedmodels==0.7.4
     - pyhocon==0.3.59
     - tensorboard==2.9.1
-    - torch==1.8.1+cu111
-    - torchaudio==0.8.1
-    - torchsummary==1.5.1
-    - torchvision==0.9.1+cu111
