@@ -16,7 +16,7 @@ class ResnetBlockFC(nn.Module):
     :param size_h (int): hidden dimension
     """
 
-    def __init__(self, size_in, size_out=None, size_h=None, beta=0.0):
+    def __init__(self, size_in, size_out=None, size_h=None, beta=0.0, use_GELU=False):
         super().__init__()
         # Attributes
         if size_out is None:
@@ -38,12 +38,13 @@ class ResnetBlockFC(nn.Module):
         nn.init.constant_(self.fc_1.bias, 0.0)
         nn.init.zeros_(self.fc_1.weight)
 
-        if beta > 0:
-            self.activation = nn.Softplus(beta=beta)
-        elif beta == 0:
-            self.activation = nn.ReLU()
-        elif beta < 0:
+        if use_GELU:
             self.activation = nn.GELU()
+        elif beta > 0:
+            self.activation = nn.Softplus(beta=beta)
+        else:
+            self.activation = nn.ReLU()
+            
             
 
         if size_in == size_out:
@@ -77,6 +78,7 @@ class ResnetFC(nn.Module):
         combine_layer=1000,
         combine_type="average",
         use_spade=False,
+        use_GELU=False,
     ):
         """
         :param d_in input size
@@ -127,12 +129,12 @@ class ResnetFC(nn.Module):
                     nn.init.constant_(self.scale_z[i].bias, 0.0)
                     nn.init.kaiming_normal_(self.scale_z[i].weight, a=0, mode="fan_in")
 
-        if beta > 0:
-            self.activation = nn.Softplus(beta=beta)
-        elif beta == 0:
-            self.activation = nn.ReLU()
-        elif beta < 0:
+        if use_GELU:
             self.activation = nn.GELU()
+        elif beta > 0:
+            self.activation = nn.Softplus(beta=beta)
+        else:
+            self.activation = nn.ReLU()
 
     def forward(self, zx, combine_inner_dims=(1,), combine_index=None, dim_size=None):
         """
