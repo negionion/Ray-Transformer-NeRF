@@ -107,9 +107,10 @@ class ResnetFC(nn.Module):
         self.combine_layer = combine_layer
         self.combine_type = combine_type
         self.use_spade = use_spade
+        self.use_GELU = use_GELU
 
         self.blocks = nn.ModuleList(
-            [ResnetBlockFC(d_hidden, beta=beta) for i in range(n_blocks)]
+            [ResnetBlockFC(d_hidden, beta=beta, use_GELU=use_GELU) for i in range(n_blocks)]
         )
 
         if d_latent != 0:
@@ -201,5 +202,6 @@ class ResnetFC(nn.Module):
             combine_layer=conf.get_int("combine_layer", 1000),
             combine_type=conf.get_string("combine_type", "average"),  # average | max
             use_spade=conf.get_bool("use_spade", False),
+            use_GELU=conf.get_bool("use_GELU", False),
             **kwargs
         )

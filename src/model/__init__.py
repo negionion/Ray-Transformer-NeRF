@@ -8,5 +8,5 @@ def make_model(conf, *args, **kwargs):
         net = PixelNeRFNet(conf, *args, **kwargs)
     else:
         raise NotImplementedError("Unsupported model type", model_type)
-    summary(net, [(1, 42, 1), (3, 64, 64)])
+    print(net)
     return net
