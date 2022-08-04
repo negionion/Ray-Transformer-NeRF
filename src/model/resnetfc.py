@@ -16,7 +16,7 @@ class ResnetBlockFC(nn.Module):
     :param size_h (int): hidden dimension
     """
 
-    def __init__(self, size_in, size_out=None, size_h=None, beta=0.0, use_GELU=False):
+    def __init__(self, size_in, size_out=None, size_h=None, beta=0.0, use_GELU=False, use_BN=False):
         super().__init__()
         # Attributes
         if size_out is None:
@@ -28,6 +28,7 @@ class ResnetBlockFC(nn.Module):
         self.size_in = size_in
         self.size_h = size_h
         self.size_out = size_out
+        self.use_BN = use_BN
         # Submodules
         self.fc_0 = nn.Linear(size_in, size_h)
         self.fc_1 = nn.Linear(size_h, size_out)
@@ -54,10 +55,27 @@ class ResnetBlockFC(nn.Module):
             nn.init.constant_(self.shortcut.bias, 0.0)
             nn.init.kaiming_normal_(self.shortcut.weight, a=0, mode="fan_in")
 
+        if use_BN:
+            self.batch_norm = nn.BatchNorm1d(size_h)
+
     def forward(self, x):
         with profiler.record_function("resblock"):
-            net = self.fc_0(self.activation(x))
-            dx = self.fc_1(self.activation(net))
+            if self.use_BN:
+                if x.ndim == 3:
+                    net = torch.swapaxes(x, 1, 2)
+                    net = self.batch_norm(net)
+                    net = torch.swapaxes(net, 1, 2)
+                    net = self.fc_0(self.activation(net))
+                    dx = torch.swapaxes(net, 1, 2)
+                    dx = self.batch_norm(dx)
+                    dx = torch.swapaxes(dx, 1, 2)
+                    dx = self.fc_0(self.activation(dx))
+                else:
+                    net = self.fc_0(self.activation(self.batch_norm(x)))
+                    dx = self.fc_1(self.activation(self.batch_norm(net)))
+            else:
+                net = self.fc_0(self.activation(x))
+                dx = self.fc_1(self.activation(net))
 
             if self.shortcut is not None:
                 x_s = self.shortcut(x)
@@ -79,6 +97,7 @@ class ResnetFC(nn.Module):
         combine_type="average",
         use_spade=False,
         use_GELU=False,
+        use_BN=False,
     ):
         """
         :param d_in input size
@@ -108,9 +127,10 @@ class ResnetFC(nn.Module):
         self.combine_type = combine_type
         self.use_spade = use_spade
         self.use_GELU = use_GELU
+        self.use_BN=use_BN
 
         self.blocks = nn.ModuleList(
-            [ResnetBlockFC(d_hidden, beta=beta, use_GELU=use_GELU) for i in range(n_blocks)]
+            [ResnetBlockFC(d_hidden, beta=beta, use_GELU=use_GELU, use_BN=use_BN) for i in range(n_blocks)]
         )
 
         if d_latent != 0:
@@ -136,6 +156,7 @@ class ResnetFC(nn.Module):
             self.activation = nn.Softplus(beta=beta)
         else:
             self.activation = nn.ReLU()
+
 
     def forward(self, zx, combine_inner_dims=(1,), combine_index=None, dim_size=None):
         """
@@ -203,5 +224,6 @@ class ResnetFC(nn.Module):
             combine_type=conf.get_string("combine_type", "average"),  # average | max
             use_spade=conf.get_bool("use_spade", False),
             use_GELU=conf.get_bool("use_GELU", False),
+            use_BN=conf.get_bool("use_BN", False),
             **kwargs
         )

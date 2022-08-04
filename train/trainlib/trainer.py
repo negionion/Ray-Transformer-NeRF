@@ -1,9 +1,11 @@
 import os.path
+from re import S
 import torch
 import numpy as np
 from torch.utils.tensorboard import SummaryWriter
 import tqdm
 import warnings
+from torchinfo import summary
 
 
 class Trainer:
@@ -157,6 +159,9 @@ class Trainer:
         step_id = self.start_iter_id
 
         progress = tqdm.tqdm(bar_format="[{rate_fmt}] ")
+
+        print("train start!")
+
         for epoch in range(self.num_epochs):
             self.writer.add_scalar(
                 "lr", self.optim.param_groups[0]["lr"], global_step=step_id

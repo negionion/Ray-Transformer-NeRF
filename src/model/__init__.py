@@ -1,5 +1,4 @@
 from .models import PixelNeRFNet
-from torchsummary import summary
 
 def make_model(conf, *args, **kwargs):
     """ Placeholder to allow more model types """
