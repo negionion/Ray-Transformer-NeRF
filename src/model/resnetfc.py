@@ -62,14 +62,8 @@ class ResnetBlockFC(nn.Module):
         with profiler.record_function("resblock"):
             if self.use_BN:
                 if x.ndim == 3:
-                    net = torch.swapaxes(x, 1, 2)
-                    net = self.batch_norm(net)
-                    net = torch.swapaxes(net, 1, 2)
-                    net = self.fc_0(self.activation(net))
-                    dx = torch.swapaxes(net, 1, 2)
-                    dx = self.batch_norm(dx)
-                    dx = torch.swapaxes(dx, 1, 2)
-                    dx = self.fc_0(self.activation(dx))
+                    net = self.fc_0(self.activation(torch.swapaxes(self.batch_norm(torch.swapaxes(x, 1, 2)), 1, 2)))
+                    dx = self.fc_1(self.activation(torch.swapaxes(self.batch_norm(torch.swapaxes(net, 1, 2)), 1, 2)))
                 else:
                     net = self.fc_0(self.activation(self.batch_norm(x)))
                     dx = self.fc_1(self.activation(self.batch_norm(net)))
