@@ -56,18 +56,18 @@ class ResnetBlockFC(nn.Module):
             nn.init.kaiming_normal_(self.shortcut.weight, a=0, mode="fan_in")
 
         if use_BN:
-            self.batch_norm_0 = nn.BatchNorm1d(size_in)
-            self.batch_norm_1 = nn.BatchNorm1d(size_h)
+            self.bn_0 = nn.BatchNorm1d(size_in)
+            self.bn_1 = nn.BatchNorm1d(size_h)
 
     def forward(self, x):
         with profiler.record_function("resblock"):
             if self.use_BN:
                 if x.ndim == 3:
-                    net = self.fc_0(self.activation(torch.swapaxes(self.batch_norm_0(torch.swapaxes(x, 1, 2)), 1, 2)))
-                    dx = self.fc_1(self.activation(torch.swapaxes(self.batch_norm_1(torch.swapaxes(net, 1, 2)), 1, 2)))
+                    net = self.fc_0(self.activation(torch.swapaxes(self.bn_0(torch.swapaxes(x, 1, 2)), 1, 2)))
+                    dx = self.fc_1(self.activation(torch.swapaxes(self.bn_1(torch.swapaxes(net, 1, 2)), 1, 2)))
                 else:
-                    net = self.fc_0(self.activation(self.batch_norm_0(x)))
-                    dx = self.fc_1(self.activation(self.batch_norm_1(net)))
+                    net = self.fc_0(self.activation(self.bn_0(x)))
+                    dx = self.fc_1(self.activation(self.bn_1(net)))
             else:
                 net = self.fc_0(self.activation(x))
                 dx = self.fc_1(self.activation(net))
