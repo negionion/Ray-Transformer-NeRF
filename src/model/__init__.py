@@ -1,5 +1,6 @@
 from .models import PixelNeRFNet
-from torchsummary import summary
+from .model_summary import sn64
+
 
 def make_model(conf, *args, **kwargs):
     """ Placeholder to allow more model types """
@@ -8,5 +9,8 @@ def make_model(conf, *args, **kwargs):
         net = PixelNeRFNet(conf, *args, **kwargs)
     else:
         raise NotImplementedError("Unsupported model type", model_type)
-    summary(net, [(1, 42, 1), (3, 64, 64)])
+    print(net)
+
+    #model_summary.sn64(net)
+
     return net
