@@ -146,11 +146,11 @@ class ResnetFC(nn.Module):
                 for i in range(n_lin_z):
                     nn.init.constant_(self.scale_z[i].bias, 0.0)
                     nn.init.kaiming_normal_(self.scale_z[i].weight, a=0, mode="fan_in")
-            
-            if self.use_PEcat:
-                self.lin_cat = nn.Linear(self.d_latent + self.d_in, d_hidden)
-                nn.init.constant_(self.lin_cat.bias, 0.0)
-                nn.init.kaiming_normal_(self.lin_cat.weight, a=0, mode="fan_in")
+
+        if self.use_PEcat:
+            self.lin_cat = nn.Linear(self.d_hidden + self.d_in, d_hidden)
+            nn.init.constant_(self.lin_cat.bias, 0.0)
+            nn.init.kaiming_normal_(self.lin_cat.weight, a=0, mode="fan_in")
 
         if use_GELU:
             self.activation = nn.GELU()
