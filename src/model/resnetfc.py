@@ -66,8 +66,8 @@ class ResnetBlockFC(nn.Module):
                     net = self.fc_0(self.activation(torch.swapaxes(self.bn_0(torch.swapaxes(x, 1, 2)), 1, 2)))
                     dx = self.fc_1(self.activation(torch.swapaxes(self.bn_1(torch.swapaxes(net, 1, 2)), 1, 2)))
                 else:
-                    net = self.fc_0(self.activation(self.bn_0(x)))
-                    dx = self.fc_1(self.activation(self.bn_1(net)))
+                    net = self.fc_0(self.activation(x))
+                    dx = self.fc_1(self.activation(net))
             else:
                 net = self.fc_0(self.activation(x))
                 dx = self.fc_1(self.activation(net))
@@ -93,6 +93,7 @@ class ResnetFC(nn.Module):
         use_spade=False,
         use_GELU=False,
         use_BN=False,
+        use_PEcat=False,
     ):
         """
         :param d_in input size
@@ -122,7 +123,8 @@ class ResnetFC(nn.Module):
         self.combine_type = combine_type
         self.use_spade = use_spade
         self.use_GELU = use_GELU
-        self.use_BN=use_BN
+        self.use_BN = use_BN
+        self.use_PEcat = use_PEcat
 
         self.blocks = nn.ModuleList(
             [ResnetBlockFC(d_hidden, beta=beta, use_GELU=use_GELU, use_BN=use_BN) for i in range(n_blocks)]
@@ -144,6 +146,11 @@ class ResnetFC(nn.Module):
                 for i in range(n_lin_z):
                     nn.init.constant_(self.scale_z[i].bias, 0.0)
                     nn.init.kaiming_normal_(self.scale_z[i].weight, a=0, mode="fan_in")
+            
+            if self.use_PEcat:
+                self.lin_cat = nn.Linear(self.d_latent + self.d_in, d_hidden)
+                nn.init.constant_(self.lin_cat.bias, 0.0)
+                nn.init.kaiming_normal_(self.lin_cat.weight, a=0, mode="fan_in")
 
         if use_GELU:
             self.activation = nn.GELU()
@@ -168,6 +175,8 @@ class ResnetFC(nn.Module):
             else:
                 x = zx
             if self.d_in > 0:
+                if self.use_PEcat:
+                    x_in = x
                 x = self.lin_in(x)
             else:
                 x = torch.zeros(self.d_hidden, device=zx.device)
@@ -191,6 +200,12 @@ class ResnetFC(nn.Module):
                     #          reduce=combine_type,
                     #      )
                     #  else:
+
+                    # Add input P.E. feature 在combine layer之前, 用concat(512+42)再經過一層act+FC調整回512
+                    if self.use_PEcat:
+                        x = torch.cat((x, x_in), dim=-1)
+                        x = self.lin_cat(self.activation(x))
+
                     x = util.combine_interleaved(
                         x, combine_inner_dims, self.combine_type
                     )
@@ -220,5 +235,6 @@ class ResnetFC(nn.Module):
             use_spade=conf.get_bool("use_spade", False),
             use_GELU=conf.get_bool("use_GELU", False),
             use_BN=conf.get_bool("use_BN", False),
+            use_PEcat=conf.get_bool("use_PEcat", False),
             **kwargs
         )
