@@ -247,7 +247,9 @@ class ResnetFC(nn.Module):
                         x = x + tz
 
                 x = self.blocks[blkid](x)
-                if blkid == self.combine_layer and self.use_sigma_branch:
+
+                # sb2, combine之後經過2個Block才做sb
+                if blkid == (self.combine_layer + 1) and self.use_sigma_branch:
                     sigma = self.sigma_out(self.activation(x))
 
             out = self.lin_out(self.activation(x))
