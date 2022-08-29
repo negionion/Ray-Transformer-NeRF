@@ -1,3 +1,4 @@
+from typing import List
 from torch import nn
 import torch
 
@@ -98,6 +99,51 @@ class ResnetBlockFC(nn.Module):
                 x_s = x
             return x_s + dx
 
+# Decoder MLP
+class DecoderMLP(nn.Module):
+    """
+    Fully connected ResNet Block class.
+    Taken from DVR code.
+    :param size_in (int): input dimension
+    :param size_out (int): output dimension
+    :param size_h (int): hidden dimension
+    """
+
+    def __init__(self, size_in, size_out, size_splits, n_blocks, beta=0.0, use_GELU=False, use_BN=False):
+        super().__init__()
+        # Attributes
+
+        assert size_in == sum(size_splits), 'size_splits must match input tensor size'
+
+        self.size_in = size_in
+        self.size_splits = size_splits
+        self.size_out = size_out
+        self.n_blocks = n_blocks
+        self.use_BN = use_BN
+        self.use_GELU = use_GELU
+        self.n_splits = len(size_splits)
+
+        # Submodules
+        self.h_mlps = nn.ModuleList()
+        for i in range(self.n_splits):
+            self.h_mlps.extend([ResnetBlockFC(size_in=size_splits[i], beta=beta, use_GELU=use_GELU, use_BN=use_BN) for j in range(n_blocks)])
+        
+
+    def forward(self, x):
+        with profiler.record_function("decoderMLP"):
+            spl_num = 0
+            splits_out = []
+            for spl_id in range(self.n_splits):
+                split_x = x[:, :, spl_num : spl_num + self.size_splits[spl_id]]
+                spl_num += self.size_splits[spl_id]
+
+                for blk_id in range(self.n_blocks):
+                    split_x = self.h_mlps[spl_id * self.n_blocks + blk_id](split_x)
+                
+                splits_out.append(split_x)
+
+            self.decoder_out = torch.cat(splits_out, dim=-1)
+            return self.decoder_out
 
 class ResnetFC(nn.Module):
     def __init__(
@@ -115,6 +161,7 @@ class ResnetFC(nn.Module):
         use_BN=False,
         use_PEcat=False,
         use_sigma_branch=False,
+        d_blocks=0,
     ):
         """
         :param d_in input size
@@ -153,10 +200,15 @@ class ResnetFC(nn.Module):
         self.use_BN = use_BN
         self.use_PEcat = use_PEcat
         self.use_sigma_branch = use_sigma_branch
+        self.d_blocks = d_blocks
 
         self.blocks = nn.ModuleList(
             [ResnetBlockFC(d_hidden, beta=beta, use_GELU=use_GELU, use_BN=use_BN) for i in range(n_blocks)]
         )
+
+        if d_blocks > 0:
+            self.decoder = DecoderMLP(size_in=d_hidden, size_out=d_hidden, size_splits=[128, 256, 128], n_blocks=d_blocks, beta=beta, use_GELU=use_GELU, use_BN=use_BN)
+
 
         if d_latent != 0:
             n_lin_z = min(combine_layer, n_blocks)
@@ -210,34 +262,6 @@ class ResnetFC(nn.Module):
                 x = torch.zeros(self.d_hidden, device=zx.device)
 
             for blkid in range(self.n_blocks):
-                if blkid == self.combine_layer:
-                    # The following implements camera frustum culling, requires torch_scatter
-                    #  if combine_index is not None:
-                    #      combine_type = (
-                    #          "mean"
-                    #          if self.combine_type == "average"
-                    #          else self.combine_type
-                    #      )
-                    #      if dim_size is not None:
-                    #          assert isinstance(dim_size, int)
-                    #      x = torch_scatter.scatter(
-                    #          x,
-                    #          combine_index,
-                    #          dim=0,
-                    #          dim_size=dim_size,
-                    #          reduce=combine_type,
-                    #      )
-                    #  else:
-                    
-                    # Add input P.E. feature 在combine layer之前, 用concat(512+42)再經過一層act+FC調整回512
-                    if self.use_PEcat:
-                        x = torch.cat((x, x_in), dim=-1)
-                        x = self.lin_cat(self.activation(x))
-                        
-                    x = util.combine_interleaved(
-                        x, combine_inner_dims, self.combine_type
-                    )
-
                 if self.d_latent > 0 and blkid < self.combine_layer:
                     tz = self.lin_z[blkid](z)
                     if self.use_spade:
@@ -245,18 +269,31 @@ class ResnetFC(nn.Module):
                         x = sz * x + tz
                     else:
                         x = x + tz
-
                 x = self.blocks[blkid](x)
+
+                if blkid == (self.combine_layer - 1):
+                    # Add input P.E. feature 在combine layer之前, 用concat(512+42)再經過一層act+FC調整回512
+                    if self.use_PEcat:
+                        x = torch.cat((x, x_in), dim=-1)
+                        x = self.lin_cat(self.activation(x))
+
+                    x = util.combine_interleaved(
+                        x, combine_inner_dims, self.combine_type
+                    )
 
                 # sb2, combine之後經過2個Block才做sb
                 if blkid == (self.combine_layer + 1) and self.use_sigma_branch:
                     sigma = self.sigma_out(self.activation(x))
+
+            if self.d_blocks > 0:
+                x = self.decoder(x)
 
             out = self.lin_out(self.activation(x))
 
             if self.use_sigma_branch:
                 out = torch.cat((out, sigma), dim=-1)
             return out
+
 
     @classmethod
     def from_conf(cls, conf, d_in, **kwargs):
@@ -273,5 +310,6 @@ class ResnetFC(nn.Module):
             use_BN=conf.get_bool("use_BN", False),
             use_PEcat=conf.get_bool("use_PEcat", False),
             use_sigma_branch=conf.get_bool("use_sigma_branch", False),
+            d_blocks=conf.get_int("d_blocks", 0),
             **kwargs
         )
