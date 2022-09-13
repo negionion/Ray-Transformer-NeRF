@@ -134,7 +134,10 @@ class DecoderMLP(nn.Module):
             spl_num = 0
             splits_out = []
             for spl_id in range(self.n_splits):
-                split_x = x[:, :, spl_num : spl_num + self.size_splits[spl_id]]
+                # split_x = x[:, :, spl_num : spl_num + self.size_splits[spl_id]]
+                # spl_num += self.size_splits[spl_id]
+                
+                split_x = x[:, :, spl_id : self.size_in : self.n_splits]
                 spl_num += self.size_splits[spl_id]
 
                 for blk_id in range(self.n_blocks):
@@ -207,7 +210,7 @@ class ResnetFC(nn.Module):
         )
 
         if d_blocks > 0:
-            self.decoder = DecoderMLP(size_in=d_hidden, size_out=d_hidden, size_splits=[128, 256, 128], n_blocks=d_blocks, beta=beta, use_GELU=use_GELU, use_BN=use_BN)
+            self.decoder = DecoderMLP(size_in=d_hidden, size_out=d_hidden, size_splits=[256, 256], n_blocks=d_blocks, beta=beta, use_GELU=use_GELU, use_BN=use_BN)
 
 
         if d_latent != 0:
