@@ -165,6 +165,7 @@ class ResnetFC(nn.Module):
         use_PEcat=False,
         use_sigma_branch=False,
         d_blocks=0,
+        use_att=False,
     ):
         """
         :param d_in input size
@@ -204,6 +205,7 @@ class ResnetFC(nn.Module):
         self.use_PEcat = use_PEcat
         self.use_sigma_branch = use_sigma_branch
         self.d_blocks = d_blocks
+        self.use_att = use_att
 
         self.blocks = nn.ModuleList(
             [ResnetBlockFC(d_hidden, beta=beta, use_GELU=use_GELU, use_BN=use_BN) for i in range(n_blocks)]
@@ -235,6 +237,12 @@ class ResnetFC(nn.Module):
             nn.init.constant_(self.lin_cat.bias, 0.0)
             nn.init.kaiming_normal_(self.lin_cat.weight, a=0, mode="fan_in")
 
+        if self.use_att:
+            self.f_encoder = nn.TransformerEncoderLayer(d_in + d_out, nhead=1, dropout=0.1, dim_feedforward=128, activation='relu', norm_first=True, batch_first=True)
+            self.f_lin_out = nn.Linear(d_in + d_out, d_out)
+            nn.init.constant_(self.f_lin_out.bias, 0.0)
+            nn.init.kaiming_normal_(self.f_lin_out.weight, a=0, mode="fan_in")
+
         if use_GELU:
             self.activation = nn.GELU()
         elif beta > 0:
@@ -265,13 +273,14 @@ class ResnetFC(nn.Module):
                 x = torch.zeros(self.d_hidden, device=zx.device)
 
             for blkid in range(self.n_blocks):
-                if self.d_latent > 0 and blkid < self.combine_layer:
+                if self.d_latent > 0 and blkid < self.combine_layer: 
                     tz = self.lin_z[blkid](z)
                     if self.use_spade:
                         sz = self.scale_z[blkid](z)
                         x = sz * x + tz
                     else:
                         x = x + tz
+
                 x = self.blocks[blkid](x)
 
                 if blkid == (self.combine_layer - 1):
@@ -295,6 +304,14 @@ class ResnetFC(nn.Module):
 
             if self.use_sigma_branch:
                 out = torch.cat((out, sigma), dim=-1)
+
+            if self.use_att and self.training:
+                x_pos = zx[..., self.d_latent :]
+                x_pos = x_pos.reshape(-1, combine_inner_dims[-1], x_pos.shape[1])
+                out = torch.cat((x_pos, out), dim=-1)
+                out = self.f_encoder(out)
+                out = self.f_lin_out(out)
+
             return out
 
 
@@ -314,5 +331,6 @@ class ResnetFC(nn.Module):
             use_PEcat=conf.get_bool("use_PEcat", False),
             use_sigma_branch=conf.get_bool("use_sigma_branch", False),
             d_blocks=conf.get_int("d_blocks", 0),
+            use_att=conf.get_bool("use_att", False),
             **kwargs
         )
