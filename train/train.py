@@ -18,6 +18,7 @@ import numpy as np
 import torch.nn.functional as F
 import torch
 from dotmap import DotMap
+from random import randint
 
 
 def extra_args(parser):
@@ -49,6 +50,12 @@ def extra_args(parser):
         action="store_true",
         default=None,
         help="Freeze encoder weights and only train MLP",
+    )
+    parser.add_argument(
+        "--rand_nview_step",
+        type=int,
+        default=-1,
+        help="Step to random input number of views",
     )
     return parser
 
@@ -131,6 +138,10 @@ class PixelNeRFTrainer(trainlib.Trainer):
         if self.use_bbox and global_step >= args.no_bbox_step:
             self.use_bbox = False
             print(">>> Stopped using bbox sampling @ iter", global_step)
+
+        if args.rand_nview_step > 0 and global_step >= args.rand_nview_step:
+            nviews[0] = randint(1, 2)   # For srn_chairs or srn_cars with 300000 step
+            print(">>> Random input number of views @ iter", global_step)
 
         if not is_train or not self.use_bbox:
             all_bboxes = None
