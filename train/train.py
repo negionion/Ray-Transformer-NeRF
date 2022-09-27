@@ -141,7 +141,7 @@ class PixelNeRFTrainer(trainlib.Trainer):
 
         if args.rand_nview_step > 0 and global_step >= args.rand_nview_step:
             nviews[0] = randint(1, 2)   # For srn_chairs or srn_cars with 300000 step
-            print(">>> Random input number of views @ iter", global_step)
+            # print(">>> Random input number of views @ iter", global_step)
 
         if not is_train or not self.use_bbox:
             all_bboxes = None
