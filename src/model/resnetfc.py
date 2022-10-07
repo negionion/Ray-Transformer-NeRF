@@ -134,9 +134,6 @@ class DecoderMLP(nn.Module):
             spl_num = 0
             splits_out = []
             for spl_id in range(self.n_splits):
-                # split_x = x[:, :, spl_num : spl_num + self.size_splits[spl_id]]
-                # spl_num += self.size_splits[spl_id]
-                
                 split_x = x[:, :, spl_id : self.size_in : self.n_splits]
                 spl_num += self.size_splits[spl_id]
 
@@ -147,6 +144,77 @@ class DecoderMLP(nn.Module):
 
             self.decoder_out = torch.cat(splits_out, dim=-1)
             return self.decoder_out
+
+class RayTransformerBlock(nn.Module):
+    """
+    :param size_in (int): input dimension
+    :param size_out (int): output dimension
+    :param size_h (int): hidden dimension
+    """
+
+    def __init__(self, d_in, d_latent, d_hidden, use_GELU=True, use_LN=True):
+        super().__init__()
+        # Attributes
+        self.d_in = d_in
+        self.d_latent = d_latent
+        self.d_hidden = d_hidden
+        self.use_LN = use_LN
+        self.use_GELU = use_GELU
+
+        self.d_att = d_hidden + (d_in - 3)  # Only use position and latent, not use viewdir
+
+        # Submodules
+
+        if use_GELU:
+            self.activation = nn.GELU()
+        else:
+            self.activation = nn.ReLU()
+
+        # v6
+        self.points_att = nn.MultiheadAttention(self.d_att, num_heads=1, dropout=0.1, batch_first=True)    # att of point
+
+        self.att_latent_in = nn.Linear(d_latent, d_hidden)
+        nn.init.constant_(self.att_latent_in.bias, 0.0)
+        nn.init.kaiming_normal_(self.att_latent_in.weight, a=0, mode="fan_in")
+        
+        self.att_fc0 = nn.Linear(d_hidden, d_hidden * 2)
+        nn.init.constant_(self.att_fc0.bias, 0.0)
+        nn.init.kaiming_normal_(self.att_fc0.weight, a=0, mode="fan_in")
+
+        self.att_fc1 = nn.Linear(d_hidden * 2, d_hidden)
+        nn.init.constant_(self.att_fc1.bias, 0.0)
+        nn.init.kaiming_normal_(self.att_fc1.weight, a=0, mode="fan_in")
+
+        if use_LN:
+            self.att_ln = nn.LayerNorm(self.d_att)
+            self.ff_ln = nn.LayerNorm(self.d_hidden)
+        
+
+    def forward(self, zx, n_points):
+        with profiler.record_function("ray_transformer_block"):
+            # 每一條Ray上的points做att
+
+            # v6
+            pos = zx[..., self.d_latent : (self.d_latent + self.d_in - 3)]  # [latent + pos + viewdir] = [512 + 39 + 3]
+            z = zx[..., : self.d_latent]
+            # attention
+            tz = self.att_latent_in(z)
+            x = (torch.cat((tz, pos), dim=-1)).reshape(-1, n_points, self.d_att)
+            x_tmp = x
+            x = self.points_att(x, x, x, need_weights=False)[0]
+            if self.use_LN:
+                x = self.att_ln(x)  # layer norm  
+            x = x + x_tmp
+            # feedforward
+            x = (x[..., :self.d_hidden]).reshape(-1, self.d_hidden)
+            x_tmp = x
+            x = self.activation(self.att_fc0(x))
+            x = self.att_fc1(x)
+            if self.use_LN:
+                x = self.ff_ln(x)   # layer norm
+            x = x + x_tmp
+            return x
+
 
 class ResnetFC(nn.Module):
     def __init__(
@@ -217,6 +285,10 @@ class ResnetFC(nn.Module):
 
         if d_latent != 0:
             n_lin_z = min(combine_layer, n_blocks)
+
+            if self.use_att:
+                self.rt_blocks = nn.ModuleList([RayTransformerBlock(d_in, d_latent, d_hidden, use_GELU=self.use_GELU, use_LN=False) for i in range(n_lin_z)])
+
             self.lin_z = nn.ModuleList(
                 [nn.Linear(d_latent, d_hidden) for i in range(n_lin_z)]
             )
@@ -237,12 +309,6 @@ class ResnetFC(nn.Module):
             nn.init.constant_(self.lin_cat.bias, 0.0)
             nn.init.kaiming_normal_(self.lin_cat.weight, a=0, mode="fan_in")
 
-        if self.use_att:
-            self.f_encoder = nn.TransformerEncoderLayer(d_in + d_out, nhead=1, dropout=0.1, dim_feedforward=128, activation='relu', norm_first=True, batch_first=True)
-            self.f_lin_out = nn.Linear(d_in + d_out, d_out)
-            nn.init.constant_(self.f_lin_out.bias, 0.0)
-            nn.init.kaiming_normal_(self.f_lin_out.weight, a=0, mode="fan_in")
-
         if use_GELU:
             self.activation = nn.GELU()
         elif beta > 0:
@@ -251,7 +317,7 @@ class ResnetFC(nn.Module):
             self.activation = nn.ReLU()
 
 
-    def forward(self, zx, combine_inner_dims=(1,), combine_index=None, dim_size=None):
+    def forward(self, zx, combine_inner_dims=(1,), combine_index=None, dim_size=None, n_points=0):
         """
         :param zx (..., d_latent + d_in)
         :param combine_inner_dims Combining dimensions for use with multiview inputs.
@@ -274,12 +340,16 @@ class ResnetFC(nn.Module):
 
             for blkid in range(self.n_blocks):
                 if self.d_latent > 0 and blkid < self.combine_layer: 
-                    tz = self.lin_z[blkid](z)
-                    if self.use_spade:
-                        sz = self.scale_z[blkid](z)
-                        x = sz * x + tz
-                    else:
+                    if self.use_att and blkid == 2:    # Ray transformer, Only use in blkid = 2
+                        tz = self.rt_blocks[blkid](zx, n_points)
                         x = x + tz
+                    else:               # Origin
+                        tz = self.lin_z[blkid](z)
+                        if self.use_spade:
+                            sz = self.scale_z[blkid](z)
+                            x = sz * x + tz
+                        else:
+                            x = x + tz
 
                 x = self.blocks[blkid](x)
 
@@ -304,13 +374,6 @@ class ResnetFC(nn.Module):
 
             if self.use_sigma_branch:
                 out = torch.cat((out, sigma), dim=-1)
-
-            if self.use_att and self.training:
-                x_pos = zx[..., self.d_latent :]
-                x_pos = x_pos.reshape(-1, combine_inner_dims[-1], x_pos.shape[1])
-                out = torch.cat((x_pos, out), dim=-1)
-                out = self.f_encoder(out)
-                out = self.f_lin_out(out)
 
             return out
 

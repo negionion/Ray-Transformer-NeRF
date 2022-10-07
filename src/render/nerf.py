@@ -193,6 +193,7 @@ class NeRFRenderer(torch.nn.Module):
                     sb, -1, 3
                 )  # (SB, B'*K, 3) B' is real ray batch size
                 eval_batch_size = (self.eval_batch_size - 1) // sb + 1
+                eval_batch_size = (eval_batch_size // K) * K
                 eval_batch_dim = 1
             else:
                 eval_batch_size = self.eval_batch_size
@@ -210,10 +211,10 @@ class NeRFRenderer(torch.nn.Module):
                     viewdirs, eval_batch_size, dim=eval_batch_dim
                 )
                 for pnts, dirs in zip(split_points, split_viewdirs):
-                    val_all.append(model(pnts, coarse=coarse, viewdirs=dirs))
+                    val_all.append(model(pnts, coarse=coarse, viewdirs=dirs, n_points=K))  # K = The number of sampling points for each Ray
             else:
                 for pnts in split_points:
-                    val_all.append(model(pnts, coarse=coarse))
+                    val_all.append(model(pnts, coarse=coarse, n_points=K))  # K = The number of sampling points for each Ray
             points = None
             viewdirs = None
             # (B*K, 4) OR (SB, B'*K, 4)
