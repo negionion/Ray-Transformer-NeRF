@@ -152,7 +152,7 @@ class RayTransformerBlock(nn.Module):
     :param size_h (int): hidden dimension
     """
 
-    def __init__(self, d_in, d_latent, d_hidden, use_GELU=True, use_LN=True):
+    def __init__(self, d_in, d_latent, d_hidden, use_GELU=True, use_LN=False):
         super().__init__()
         # Attributes
         self.d_in = d_in
@@ -177,41 +177,41 @@ class RayTransformerBlock(nn.Module):
         nn.init.constant_(self.att_latent_in.bias, 0.0)
         nn.init.kaiming_normal_(self.att_latent_in.weight, a=0, mode="fan_in")
         
-        self.att_fc0 = nn.Linear(d_hidden, d_hidden * 2)
-        nn.init.constant_(self.att_fc0.bias, 0.0)
-        nn.init.kaiming_normal_(self.att_fc0.weight, a=0, mode="fan_in")
+        self.ffn_fc0 = nn.Linear(d_hidden, d_hidden * 2)
+        nn.init.constant_(self.ffn_fc0.bias, 0.0)
+        nn.init.kaiming_normal_(self.ffn_fc0.weight, a=0, mode="fan_in")
 
-        self.att_fc1 = nn.Linear(d_hidden * 2, d_hidden)
-        nn.init.constant_(self.att_fc1.bias, 0.0)
-        nn.init.kaiming_normal_(self.att_fc1.weight, a=0, mode="fan_in")
+        self.ffn_fc1 = nn.Linear(d_hidden * 2, d_hidden)
+        nn.init.constant_(self.ffn_fc1.bias, 0.0)
+        nn.init.kaiming_normal_(self.ffn_fc1.weight)
 
         if use_LN:
             self.att_ln = nn.LayerNorm(self.d_att)
-            self.ff_ln = nn.LayerNorm(self.d_hidden)
+            self.ffn_ln = nn.LayerNorm(self.d_hidden)
         
 
     def forward(self, zx, n_points):
         with profiler.record_function("ray_transformer_block"):
-            # 每一條Ray上的points做att
-
-            # v6
+            # each ray transformer
             pos = zx[..., self.d_latent : (self.d_latent + self.d_in - 3)]  # [latent + pos + viewdir] = [512 + 39 + 3]
             z = zx[..., : self.d_latent]
-            # attention
             tz = self.att_latent_in(z)
             x = (torch.cat((tz, pos), dim=-1)).reshape(-1, n_points, self.d_att)
             x_tmp = x
+
+            # attention
             x = self.points_att(x, x, x, need_weights=False)[0]
             if self.use_LN:
                 x = self.att_ln(x)  # layer norm  
             x = x + x_tmp
+
             # feedforward
             x = (x[..., :self.d_hidden]).reshape(-1, self.d_hidden)
             x_tmp = x
-            x = self.activation(self.att_fc0(x))
-            x = self.att_fc1(x)
+            x = self.activation(self.ffn_fc0(x))
+            x = self.ffn_fc1(x)
             if self.use_LN:
-                x = self.ff_ln(x)   # layer norm
+                x = self.ffn_ln(x)   # layer norm
             x = x + x_tmp
             return x
 
@@ -233,7 +233,7 @@ class ResnetFC(nn.Module):
         use_PEcat=False,
         use_sigma_branch=False,
         d_blocks=0,
-        use_att=False,
+        lin_z_type=['fc', 'fc', 'fc']
     ):
         """
         :param d_in input size
@@ -273,7 +273,7 @@ class ResnetFC(nn.Module):
         self.use_PEcat = use_PEcat
         self.use_sigma_branch = use_sigma_branch
         self.d_blocks = d_blocks
-        self.use_att = use_att
+        self.lin_z_type = lin_z_type
 
         self.blocks = nn.ModuleList(
             [ResnetBlockFC(d_hidden, beta=beta, use_GELU=use_GELU, use_BN=use_BN) for i in range(n_blocks)]
@@ -285,17 +285,16 @@ class ResnetFC(nn.Module):
 
         if d_latent != 0:
             n_lin_z = min(combine_layer, n_blocks)
-
-            if self.use_att:
-                self.rt_blocks = nn.ModuleList([RayTransformerBlock(d_in, d_latent, d_hidden, use_GELU=self.use_GELU, use_LN=False) for i in range(n_lin_z)])
-
-            self.lin_z = nn.ModuleList(
-                [nn.Linear(d_latent, d_hidden) for i in range(n_lin_z)]
-            )
+            self.lin_z = nn.ModuleList()
             for i in range(n_lin_z):
-                nn.init.constant_(self.lin_z[i].bias, 0.0)
-                nn.init.kaiming_normal_(self.lin_z[i].weight, a=0, mode="fan_in")
-
+                print("lin_z_{0} type = {1}".format(i, lin_z_type[i]))
+                if self.lin_z_type[i] == 'RT':
+                    self.lin_z.append(RayTransformerBlock(d_in, d_latent, d_hidden, use_GELU=self.use_GELU, use_LN=False))
+                else:
+                    self.lin_z.append(nn.Linear(d_latent, d_hidden))
+                    nn.init.constant_(self.lin_z[i].bias, 0.0)
+                    nn.init.kaiming_normal_(self.lin_z[i].weight, a=0, mode="fan_in")
+                    
             if self.use_spade:
                 self.scale_z = nn.ModuleList(
                     [nn.Linear(d_latent, d_hidden) for _ in range(n_lin_z)]
@@ -303,7 +302,7 @@ class ResnetFC(nn.Module):
                 for i in range(n_lin_z):
                     nn.init.constant_(self.scale_z[i].bias, 0.0)
                     nn.init.kaiming_normal_(self.scale_z[i].weight, a=0, mode="fan_in")
-            
+
         if self.use_PEcat:
             self.lin_cat = nn.Linear(self.d_hidden + self.d_in, d_hidden)
             nn.init.constant_(self.lin_cat.bias, 0.0)
@@ -340,10 +339,10 @@ class ResnetFC(nn.Module):
 
             for blkid in range(self.n_blocks):
                 if self.d_latent > 0 and blkid < self.combine_layer: 
-                    if self.use_att and blkid == 2:    # Ray transformer, Only use in blkid = 2
-                        tz = self.rt_blocks[blkid](zx, n_points)
+                    if self.lin_z_type[blkid] == 'RT':     # Ray transformer
+                        tz = self.lin_z[blkid](zx, n_points)
                         x = x + tz
-                    else:               # Origin
+                    else:                                   # Origin
                         tz = self.lin_z[blkid](z)
                         if self.use_spade:
                             sz = self.scale_z[blkid](z)
@@ -394,6 +393,6 @@ class ResnetFC(nn.Module):
             use_PEcat=conf.get_bool("use_PEcat", False),
             use_sigma_branch=conf.get_bool("use_sigma_branch", False),
             d_blocks=conf.get_int("d_blocks", 0),
-            use_att=conf.get_bool("use_att", False),
+            lin_z_type=conf.get_list("lin_z_type", ['fc', 'fc', 'fc']),
             **kwargs
         )
