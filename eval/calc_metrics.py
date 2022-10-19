@@ -333,6 +333,8 @@ def run_reduce():
         total_txt += " {}: {:.6f}".format(name, all_metrics[name])
     metrics_txt.append(total_txt)
 
+    metrics_txt.append("\n" + args.output)
+
     metrics_txt = "\n".join(metrics_txt)
     with open(out_metrics_path, "w") as f:
         f.write(metrics_txt)

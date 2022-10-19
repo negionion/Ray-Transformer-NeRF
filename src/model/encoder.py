@@ -65,7 +65,11 @@ class SpatialEncoder(nn.Module):
             # Following 2 lines need to be uncommented for older configs
             self.model.fc = nn.Sequential()
             self.model.avgpool = nn.Sequential()
-            self.latent_size = [0, 64, 128, 256, 512, 1024][num_layers]
+
+            if backbone == "resnet34":
+                self.latent_size = [0, 64, 128, 256, 512, 1024][num_layers]
+            elif backbone == "resnext50_32x4d":  #0, 64, 256, 512, 1024, 2048
+                self.latent_size = [0, 64, 320, 832, 1856, 3904][num_layers]
 
         self.num_layers = num_layers
         self.index_interp = index_interp

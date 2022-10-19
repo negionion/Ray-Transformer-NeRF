@@ -1,3 +1,4 @@
+from typing import List
 from torch import nn
 import torch
 
@@ -61,6 +62,7 @@ class ResnetBlockFC(nn.Module):
 
     def forward(self, x):
         with profiler.record_function("resblock"):
+            # v2
             if self.use_BN:
                 if x.ndim == 3:
                     net = self.fc_0(self.activation(torch.swapaxes(self.bn_0(torch.swapaxes(x, 1, 2)), 1, 2)))
@@ -68,6 +70,25 @@ class ResnetBlockFC(nn.Module):
                 else:
                     net = self.fc_0(self.activation(self.bn_0(x)))
                     dx = self.fc_1(self.activation(self.bn_1(net)))
+            
+            # v2.1
+            # if self.use_BN:
+            #     if x.ndim == 3:
+            #        net = self.fc_0(self.activation(torch.swapaxes(self.bn_0(torch.swapaxes(x, 1, 2)), 1, 2)))
+            #        dx = self.fc_1(self.activation(torch.swapaxes(self.bn_1(torch.swapaxes(net, 1, 2)), 1, 2)))
+            #     else:
+            #        net = self.fc_0(self.activation(x))
+            #        dx = self.fc_1(self.activation(net))
+            
+            # v2.2
+            # if self.use_BN:
+            #     if x.ndim == 3:
+            #        net = self.fc_0(self.activation(torch.swapaxes(self.bn_0(torch.swapaxes(x, 1, 2)), 1, 2)))
+            #        dx = self.fc_1(self.activation(net))
+            #     else:
+            #        net = self.fc_0(self.activation(self.bn_0(x)))
+            #        dx = self.fc_1(self.activation(net))
+            
             else:
                 net = self.fc_0(self.activation(x))
                 dx = self.fc_1(self.activation(net))
@@ -77,6 +98,120 @@ class ResnetBlockFC(nn.Module):
             else:
                 x_s = x
             return x_s + dx
+
+# Decoder MLP
+class DecoderMLP(nn.Module):
+    """
+    Fully connected ResNet Block class.
+    Taken from DVR code.
+    :param size_in (int): input dimension
+    :param size_out (int): output dimension
+    :param size_h (int): hidden dimension
+    """
+
+    def __init__(self, size_in, size_out, size_splits, n_blocks, beta=0.0, use_GELU=False, use_BN=False):
+        super().__init__()
+        # Attributes
+
+        assert size_in == sum(size_splits), 'size_splits must match input tensor size'
+
+        self.size_in = size_in
+        self.size_splits = size_splits
+        self.size_out = size_out
+        self.n_blocks = n_blocks
+        self.use_BN = use_BN
+        self.use_GELU = use_GELU
+        self.n_splits = len(size_splits)
+
+        # Submodules
+        self.h_mlps = nn.ModuleList()
+        for i in range(self.n_splits):
+            self.h_mlps.extend([ResnetBlockFC(size_in=size_splits[i], beta=beta, use_GELU=use_GELU, use_BN=use_BN) for j in range(n_blocks)])
+        
+
+    def forward(self, x):
+        with profiler.record_function("decoderMLP"):
+            spl_num = 0
+            splits_out = []
+            for spl_id in range(self.n_splits):
+                split_x = x[:, :, spl_id : self.size_in : self.n_splits]
+                spl_num += self.size_splits[spl_id]
+
+                for blk_id in range(self.n_blocks):
+                    split_x = self.h_mlps[spl_id * self.n_blocks + blk_id](split_x)
+                
+                splits_out.append(split_x)
+
+            self.decoder_out = torch.cat(splits_out, dim=-1)
+            return self.decoder_out
+
+class RayTransformerBlock(nn.Module):
+    """
+    :param size_in (int): input dimension
+    :param size_out (int): output dimension
+    :param size_h (int): hidden dimension
+    """
+
+    def __init__(self, d_in, d_latent, d_hidden, use_GELU=True, use_LN=False):
+        super().__init__()
+        # Attributes
+        self.d_in = d_in
+        self.d_latent = d_latent
+        self.d_hidden = d_hidden
+        self.use_LN = use_LN
+        self.use_GELU = use_GELU
+
+        self.d_att = d_hidden + (d_in - 3)  # Only use position and latent, not use viewdir
+
+        # Submodules
+
+        if use_GELU:
+            self.activation = nn.GELU()
+        else:
+            self.activation = nn.ReLU()
+
+        # v6
+        self.points_att = nn.MultiheadAttention(self.d_att, num_heads=1, dropout=0.0, batch_first=True)    # att of point
+
+        self.att_latent_in = nn.Linear(d_latent, d_hidden)
+        nn.init.constant_(self.att_latent_in.bias, 0.0)
+        nn.init.kaiming_normal_(self.att_latent_in.weight, a=0, mode="fan_in")
+        
+        self.ffn_fc0 = nn.Linear(d_hidden, d_hidden * 2)
+        nn.init.constant_(self.ffn_fc0.bias, 0.0)
+        nn.init.kaiming_normal_(self.ffn_fc0.weight, a=0, mode="fan_in")
+
+        self.ffn_fc1 = nn.Linear(d_hidden * 2, d_hidden)
+        nn.init.constant_(self.ffn_fc1.bias, 0.0)
+        nn.init.kaiming_normal_(self.ffn_fc1.weight)
+
+        if use_LN:
+            # self.att_ln = nn.LayerNorm(self.d_hidden)
+            self.ffn_ln = nn.LayerNorm(self.d_hidden)
+        
+
+    def forward(self, zx, n_points):
+        with profiler.record_function("ray_transformer_block"):
+            # each ray transformer
+            pos = zx[..., self.d_latent : (self.d_latent + self.d_in - 3)]  # [latent + pos + viewdir] = [512 or 1856 + 39 + 3]
+            z = zx[..., : self.d_latent]
+            tz = self.att_latent_in(z)
+            # if self.use_LN:
+            #     tz = self.att_ln(tz)  # layer norm  
+            x = (torch.cat((tz, pos), dim=-1)).reshape(-1, n_points, self.d_att)
+            
+            # attention
+            dx = self.points_att(x, x, x, need_weights=False)[0]
+            x = x + dx
+
+            # feedforward
+            x = (x[..., :self.d_hidden]).reshape(-1, self.d_hidden)
+            dx = x
+            if self.use_LN:
+                dx = self.ffn_ln(dx)   # layer norm
+            dx = self.ffn_fc1(self.activation(self.ffn_fc0(dx)))
+            x = x + dx
+            return x
 
 
 class ResnetFC(nn.Module):
@@ -93,6 +228,10 @@ class ResnetFC(nn.Module):
         use_spade=False,
         use_GELU=False,
         use_BN=False,
+        use_PEcat=False,
+        use_sigma_branch=False,
+        d_blocks=0,
+        lin_z_type=['fc', 'fc', 'fc']
     ):
         """
         :param d_in input size
@@ -108,6 +247,12 @@ class ResnetFC(nn.Module):
             nn.init.constant_(self.lin_in.bias, 0.0)
             nn.init.kaiming_normal_(self.lin_in.weight, a=0, mode="fan_in")
 
+        if use_sigma_branch:
+            d_out = 3
+            self.sigma_out = nn.Linear(d_hidden, 1)
+            nn.init.constant_(self.sigma_out.bias, 0.0)
+            nn.init.kaiming_normal_(self.sigma_out.weight, a=0, mode="fan_in")
+        
         self.lin_out = nn.Linear(d_hidden, d_out)
         nn.init.constant_(self.lin_out.bias, 0.0)
         nn.init.kaiming_normal_(self.lin_out.weight, a=0, mode="fan_in")
@@ -122,21 +267,34 @@ class ResnetFC(nn.Module):
         self.combine_type = combine_type
         self.use_spade = use_spade
         self.use_GELU = use_GELU
-        self.use_BN=use_BN
+        self.use_BN = use_BN
+        self.use_PEcat = use_PEcat
+        self.use_sigma_branch = use_sigma_branch
+        self.d_blocks = d_blocks
+        self.lin_z_type = lin_z_type
 
         self.blocks = nn.ModuleList(
             [ResnetBlockFC(d_hidden, beta=beta, use_GELU=use_GELU, use_BN=use_BN) for i in range(n_blocks)]
         )
 
+        if d_blocks > 0:
+            self.decoder = DecoderMLP(size_in=d_hidden, size_out=d_hidden, size_splits=[256, 256], n_blocks=d_blocks, beta=beta, use_GELU=use_GELU, use_BN=use_BN)
+
+
         if d_latent != 0:
             n_lin_z = min(combine_layer, n_blocks)
-            self.lin_z = nn.ModuleList(
-                [nn.Linear(d_latent, d_hidden) for i in range(n_lin_z)]
-            )
+            self.lin_z = nn.ModuleList()
             for i in range(n_lin_z):
-                nn.init.constant_(self.lin_z[i].bias, 0.0)
-                nn.init.kaiming_normal_(self.lin_z[i].weight, a=0, mode="fan_in")
-
+                print("lin_z_{0} type = {1}".format(i, lin_z_type[i]))
+                if self.lin_z_type[i] == 'RT':
+                    self.lin_z.append(RayTransformerBlock(d_in, d_latent, d_hidden, use_GELU=self.use_GELU, use_LN=False))
+                elif self.lin_z_type[i] == 'RTLN':
+                    self.lin_z.append(RayTransformerBlock(d_in, d_latent, d_hidden, use_GELU=self.use_GELU, use_LN=True))
+                else:
+                    self.lin_z.append(nn.Linear(d_latent, d_hidden))
+                    nn.init.constant_(self.lin_z[i].bias, 0.0)
+                    nn.init.kaiming_normal_(self.lin_z[i].weight, a=0, mode="fan_in")
+                    
             if self.use_spade:
                 self.scale_z = nn.ModuleList(
                     [nn.Linear(d_latent, d_hidden) for _ in range(n_lin_z)]
@@ -144,6 +302,11 @@ class ResnetFC(nn.Module):
                 for i in range(n_lin_z):
                     nn.init.constant_(self.scale_z[i].bias, 0.0)
                     nn.init.kaiming_normal_(self.scale_z[i].weight, a=0, mode="fan_in")
+
+        if self.use_PEcat:
+            self.lin_cat = nn.Linear(self.d_hidden + self.d_in, d_hidden)
+            nn.init.constant_(self.lin_cat.bias, 0.0)
+            nn.init.kaiming_normal_(self.lin_cat.weight, a=0, mode="fan_in")
 
         if use_GELU:
             self.activation = nn.GELU()
@@ -153,7 +316,7 @@ class ResnetFC(nn.Module):
             self.activation = nn.ReLU()
 
 
-    def forward(self, zx, combine_inner_dims=(1,), combine_index=None, dim_size=None):
+    def forward(self, zx, combine_inner_dims=(1,), combine_index=None, dim_size=None, n_points=0):
         """
         :param zx (..., d_latent + d_in)
         :param combine_inner_dims Combining dimensions for use with multiview inputs.
@@ -168,44 +331,51 @@ class ResnetFC(nn.Module):
             else:
                 x = zx
             if self.d_in > 0:
+                if self.use_PEcat:
+                    x_in = x
                 x = self.lin_in(x)
             else:
                 x = torch.zeros(self.d_hidden, device=zx.device)
 
             for blkid in range(self.n_blocks):
-                if blkid == self.combine_layer:
-                    # The following implements camera frustum culling, requires torch_scatter
-                    #  if combine_index is not None:
-                    #      combine_type = (
-                    #          "mean"
-                    #          if self.combine_type == "average"
-                    #          else self.combine_type
-                    #      )
-                    #      if dim_size is not None:
-                    #          assert isinstance(dim_size, int)
-                    #      x = torch_scatter.scatter(
-                    #          x,
-                    #          combine_index,
-                    #          dim=0,
-                    #          dim_size=dim_size,
-                    #          reduce=combine_type,
-                    #      )
-                    #  else:
+                if self.d_latent > 0 and blkid < self.combine_layer: 
+                    if self.lin_z_type[blkid] == 'RT' or self.lin_z_type[blkid] == 'RTLN':     # Ray transformer
+                        tz = self.lin_z[blkid](zx, n_points)
+                        x = x + tz
+                    else:                                   # Origin
+                        tz = self.lin_z[blkid](z)
+                        if self.use_spade:
+                            sz = self.scale_z[blkid](z)
+                            x = sz * x + tz
+                        else:
+                            x = x + tz
+
+                x = self.blocks[blkid](x)
+
+                if blkid == (self.combine_layer - 1):
+                    # Add input P.E. feature 在combine layer之前, 用concat(512+42)再經過一層act+FC調整回512
+                    if self.use_PEcat:
+                        x = torch.cat((x, x_in), dim=-1)
+                        x = self.lin_cat(self.activation(x))
+
                     x = util.combine_interleaved(
                         x, combine_inner_dims, self.combine_type
                     )
 
-                if self.d_latent > 0 and blkid < self.combine_layer:
-                    tz = self.lin_z[blkid](z)
-                    if self.use_spade:
-                        sz = self.scale_z[blkid](z)
-                        x = sz * x + tz
-                    else:
-                        x = x + tz
+                # sb2, combine之後經過2個Block才做sb
+                if blkid == (self.combine_layer + 1) and self.use_sigma_branch:
+                    sigma = self.sigma_out(self.activation(x))
 
-                x = self.blocks[blkid](x)
+            if self.d_blocks > 0:
+                x = self.decoder(x)
+
             out = self.lin_out(self.activation(x))
+
+            if self.use_sigma_branch:
+                out = torch.cat((out, sigma), dim=-1)
+
             return out
+
 
     @classmethod
     def from_conf(cls, conf, d_in, **kwargs):
@@ -220,5 +390,9 @@ class ResnetFC(nn.Module):
             use_spade=conf.get_bool("use_spade", False),
             use_GELU=conf.get_bool("use_GELU", False),
             use_BN=conf.get_bool("use_BN", False),
+            use_PEcat=conf.get_bool("use_PEcat", False),
+            use_sigma_branch=conf.get_bool("use_sigma_branch", False),
+            d_blocks=conf.get_int("d_blocks", 0),
+            lin_z_type=conf.get_list("lin_z_type", ['fc', 'fc', 'fc']),
             **kwargs
         )
