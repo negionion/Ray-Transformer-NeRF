@@ -152,7 +152,7 @@ class RayTransformerBlock(nn.Module):
     :param size_h (int): hidden dimension
     """
 
-    def __init__(self, d_in, d_latent, d_hidden, use_GELU=True, use_LN=False):
+    def __init__(self, d_in, d_latent, d_hidden, use_GELU=True, use_LN=False, att_dropout=0.1):
         super().__init__()
         # Attributes
         self.d_in = d_in
@@ -160,6 +160,7 @@ class RayTransformerBlock(nn.Module):
         self.d_hidden = d_hidden
         self.use_LN = use_LN
         self.use_GELU = use_GELU
+        self.att_dropout = att_dropout
 
         self.d_att = d_hidden + (d_in - 3)  # Only use position and latent, not use viewdir
 
@@ -171,7 +172,7 @@ class RayTransformerBlock(nn.Module):
             self.activation = nn.ReLU()
 
         # v6
-        self.points_att = nn.MultiheadAttention(self.d_att, num_heads=1, dropout=0.0, batch_first=True)    # att of point
+        self.points_att = nn.MultiheadAttention(self.d_att, num_heads=1, dropout=self.att_dropout, batch_first=True)    # att of point
 
         self.att_latent_in = nn.Linear(d_latent, d_hidden)
         nn.init.constant_(self.att_latent_in.bias, 0.0)
@@ -183,7 +184,7 @@ class RayTransformerBlock(nn.Module):
 
         self.ffn_fc1 = nn.Linear(d_hidden * 2, d_hidden)
         nn.init.constant_(self.ffn_fc1.bias, 0.0)
-        nn.init.kaiming_normal_(self.ffn_fc1.weight)
+        nn.init.kaiming_normal_(self.ffn_fc1.weight, a=0, mode="fan_in")
 
         if use_LN:
             # self.att_ln = nn.LayerNorm(self.d_hidden)
@@ -231,7 +232,8 @@ class ResnetFC(nn.Module):
         use_PEcat=False,
         use_sigma_branch=False,
         d_blocks=0,
-        lin_z_type=['fc', 'fc', 'fc']
+        lin_z_type=['FC', 'FC', 'FC'],
+        att_dropout=0.1
     ):
         """
         :param d_in input size
@@ -272,6 +274,7 @@ class ResnetFC(nn.Module):
         self.use_sigma_branch = use_sigma_branch
         self.d_blocks = d_blocks
         self.lin_z_type = lin_z_type
+        self.att_dropout = att_dropout
 
         self.blocks = nn.ModuleList(
             [ResnetBlockFC(d_hidden, beta=beta, use_GELU=use_GELU, use_BN=use_BN) for i in range(n_blocks)]
@@ -287,9 +290,9 @@ class ResnetFC(nn.Module):
             for i in range(n_lin_z):
                 print("lin_z_{0} type = {1}".format(i, lin_z_type[i]))
                 if self.lin_z_type[i] == 'RT':
-                    self.lin_z.append(RayTransformerBlock(d_in, d_latent, d_hidden, use_GELU=self.use_GELU, use_LN=False))
+                    self.lin_z.append(RayTransformerBlock(d_in, d_latent, d_hidden, use_GELU=self.use_GELU, use_LN=False, att_dropout=self.att_dropout))
                 elif self.lin_z_type[i] == 'RTLN':
-                    self.lin_z.append(RayTransformerBlock(d_in, d_latent, d_hidden, use_GELU=self.use_GELU, use_LN=True))
+                    self.lin_z.append(RayTransformerBlock(d_in, d_latent, d_hidden, use_GELU=self.use_GELU, use_LN=True, att_dropout=self.att_dropout))
                 else:
                     self.lin_z.append(nn.Linear(d_latent, d_hidden))
                     nn.init.constant_(self.lin_z[i].bias, 0.0)
@@ -393,6 +396,7 @@ class ResnetFC(nn.Module):
             use_PEcat=conf.get_bool("use_PEcat", False),
             use_sigma_branch=conf.get_bool("use_sigma_branch", False),
             d_blocks=conf.get_int("d_blocks", 0),
-            lin_z_type=conf.get_list("lin_z_type", ['fc', 'fc', 'fc']),
+            lin_z_type=conf.get_list("lin_z_type", ['FC', 'FC', 'FC']),
+            att_dropout=conf.get_float("att_dropout", 0.1),
             **kwargs
         )
