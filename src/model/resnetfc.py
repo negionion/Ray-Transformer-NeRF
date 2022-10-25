@@ -178,11 +178,11 @@ class RayTransformerBlock(nn.Module):
         nn.init.constant_(self.att_latent_in.bias, 0.0)
         nn.init.kaiming_normal_(self.att_latent_in.weight, a=0, mode="fan_in")
         
-        self.ffn_fc0 = nn.Linear(d_hidden, d_hidden * 2)
+        self.ffn_fc0 = nn.Linear(d_hidden, d_hidden)
         nn.init.constant_(self.ffn_fc0.bias, 0.0)
         nn.init.kaiming_normal_(self.ffn_fc0.weight, a=0, mode="fan_in")
 
-        self.ffn_fc1 = nn.Linear(d_hidden * 2, d_hidden)
+        self.ffn_fc1 = nn.Linear(d_hidden, d_hidden)
         nn.init.constant_(self.ffn_fc1.bias, 0.0)
         nn.init.kaiming_normal_(self.ffn_fc1.weight, a=0, mode="fan_in")
 
@@ -207,11 +207,17 @@ class RayTransformerBlock(nn.Module):
 
             # feedforward
             x = (x[..., :self.d_hidden]).reshape(-1, self.d_hidden)
-            dx = x
-            if self.use_LN:
-                dx = self.ffn_ln(dx)   # layer norm
-            dx = self.ffn_fc1(self.activation(self.ffn_fc0(dx)))
+
+            # dx = x
+            # if self.use_LN:
+            #     dx = self.ffn_ln(dx)   # layer norm (pre)
+            # dx = self.ffn_fc1(self.activation(self.ffn_fc0(dx)))
+            # x = x + dx
+
+            dx = self.ffn_fc1(self.activation(self.ffn_fc0(x)))
             x = x + dx
+            if self.use_LN:
+                x = self.ffn_ln(x)   # layer norm (post)
             return x
 
 
