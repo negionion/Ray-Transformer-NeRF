@@ -178,16 +178,16 @@ class RayTransformerBlock(nn.Module):
         nn.init.constant_(self.att_latent_in.bias, 0.0)
         nn.init.kaiming_normal_(self.att_latent_in.weight, a=0, mode="fan_in")
         
-        self.ffn_fc0 = nn.Linear(d_hidden, d_hidden)
+        self.ffn_fc0 = nn.Linear(d_hidden, d_hidden * 2)
         nn.init.constant_(self.ffn_fc0.bias, 0.0)
         nn.init.kaiming_normal_(self.ffn_fc0.weight, a=0, mode="fan_in")
 
-        self.ffn_fc1 = nn.Linear(d_hidden, d_hidden)
+        self.ffn_fc1 = nn.Linear(d_hidden * 2, d_hidden)
         nn.init.constant_(self.ffn_fc1.bias, 0.0)
         nn.init.kaiming_normal_(self.ffn_fc1.weight, a=0, mode="fan_in")
 
         if use_LN:
-            # self.att_ln = nn.LayerNorm(self.d_hidden)
+            self.att_ln = nn.LayerNorm(self.d_hidden)
             self.ffn_ln = nn.LayerNorm(self.d_hidden)
         
 
@@ -195,18 +195,20 @@ class RayTransformerBlock(nn.Module):
         with profiler.record_function("ray_transformer_block"):
             # each ray transformer
             pos = zx[..., self.d_latent : (self.d_latent + self.d_in - 3)]  # [latent + pos + viewdir] = [512 or 1856 + 39 + 3]
-            z = zx[..., : self.d_latent]
-            tz = self.att_latent_in(z)
+            tz = self.att_latent_in(zx[..., : self.d_latent])
             # if self.use_LN:
-            #     tz = self.att_ln(tz)  # layer norm  
+            #     tz = self.att_ln(tz)  # layer norm (pre)
             x = (torch.cat((tz, pos), dim=-1)).reshape(-1, n_points, self.d_att)
             
             # attention
             dx = self.points_att(x, x, x, need_weights=False)[0]
             x = x + dx
-
+            x = (x[..., :self.d_hidden])
+            if self.use_LN:
+                x = self.att_ln(x)  # att layer norm (post)
+            
             # feedforward
-            x = (x[..., :self.d_hidden]).reshape(-1, self.d_hidden)
+            x = x.reshape(-1, self.d_hidden)
 
             # dx = x
             # if self.use_LN:
@@ -217,7 +219,7 @@ class RayTransformerBlock(nn.Module):
             dx = self.ffn_fc1(self.activation(self.ffn_fc0(x)))
             x = x + dx
             if self.use_LN:
-                x = self.ffn_ln(x)   # layer norm (post)
+                x = self.ffn_ln(x)   # ff layer norm (post)
             return x
 
 
@@ -297,8 +299,10 @@ class ResnetFC(nn.Module):
                 print("lin_z_{0} type = {1}".format(i, lin_z_type[i]))
                 if self.lin_z_type[i] == 'RT':
                     self.lin_z.append(RayTransformerBlock(d_in, d_latent, d_hidden, use_GELU=self.use_GELU, use_LN=False, att_dropout=self.att_dropout))
+                    print("att_dropout = {0}".format(self.att_dropout))
                 elif self.lin_z_type[i] == 'RTLN':
                     self.lin_z.append(RayTransformerBlock(d_in, d_latent, d_hidden, use_GELU=self.use_GELU, use_LN=True, att_dropout=self.att_dropout))
+                    print("att_dropout = {0}".format(self.att_dropout))
                 else:
                     self.lin_z.append(nn.Linear(d_latent, d_hidden))
                     nn.init.constant_(self.lin_z[i].bias, 0.0)
