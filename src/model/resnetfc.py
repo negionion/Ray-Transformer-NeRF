@@ -71,24 +71,6 @@ class ResnetBlockFC(nn.Module):
                     net = self.fc_0(self.activation(self.bn_0(x)))
                     dx = self.fc_1(self.activation(self.bn_1(net)))
             
-            # v2.1
-            # if self.use_BN:
-            #     if x.ndim == 3:
-            #        net = self.fc_0(self.activation(torch.swapaxes(self.bn_0(torch.swapaxes(x, 1, 2)), 1, 2)))
-            #        dx = self.fc_1(self.activation(torch.swapaxes(self.bn_1(torch.swapaxes(net, 1, 2)), 1, 2)))
-            #     else:
-            #        net = self.fc_0(self.activation(x))
-            #        dx = self.fc_1(self.activation(net))
-            
-            # v2.2
-            # if self.use_BN:
-            #     if x.ndim == 3:
-            #        net = self.fc_0(self.activation(torch.swapaxes(self.bn_0(torch.swapaxes(x, 1, 2)), 1, 2)))
-            #        dx = self.fc_1(self.activation(net))
-            #     else:
-            #        net = self.fc_0(self.activation(self.bn_0(x)))
-            #        dx = self.fc_1(self.activation(net))
-            
             else:
                 net = self.fc_0(self.activation(x))
                 dx = self.fc_1(self.activation(net))
@@ -193,14 +175,23 @@ class RayTransformerBlock(nn.Module):
 
     def forward(self, zx, n_points):
         with profiler.record_function("ray_transformer_block"):
-            # each ray transformer
+            # ray transformer
             pos = zx[..., self.d_latent : (self.d_latent + self.d_in - 3)]  # [latent + pos + viewdir] = [512 or 1856 + 39 + 3]
             tz = self.att_latent_in(zx[..., : self.d_latent])
-            # if self.use_LN:
-            #     tz = self.att_ln(tz)  # layer norm (pre)
-            x = (torch.cat((tz, pos), dim=-1)).reshape(-1, n_points, self.d_att)
-            
             # attention
+            x = (torch.cat((tz, pos), dim=-1))
+            x = x.reshape(-1, n_points, self.d_att)
+
+            # =====att layer norm (pre)=====
+            # if self.use_LN:
+            #     tz = self.att_ln(tz)  # att layer norm (pre)
+            # dx = (torch.cat((tz, pos), dim=-1))
+            # dx = dx.reshape(-1, n_points, self.d_att)
+            # dx = self.points_att(dx, dx, dx, need_weights=False)[0]
+            # x = x + dx
+            # x = (x[..., :self.d_hidden])
+
+            # =====att layer norm (post)=====
             dx = self.points_att(x, x, x, need_weights=False)[0]
             x = x + dx
             x = (x[..., :self.d_hidden])
@@ -210,16 +201,23 @@ class RayTransformerBlock(nn.Module):
             # feedforward
             x = x.reshape(-1, self.d_hidden)
 
+            # =====ff layer norm (pre)=====
             # dx = x
             # if self.use_LN:
-            #     dx = self.ffn_ln(dx)   # layer norm (pre)
-            # dx = self.ffn_fc1(self.activation(self.ffn_fc0(dx)))
+            #     dx = self.ffn_ln(dx)
+            # dx = self.ffn_fc0(dx)
+            # dx = self.activation(dx)
+            # dx = self.ffn_fc1(dx)
             # x = x + dx
 
-            dx = self.ffn_fc1(self.activation(self.ffn_fc0(x)))
+            # =====ff layer norm (post)=====
+            dx = self.ffn_fc0(x)
+            dx = self.activation(dx)
+            dx = self.ffn_fc1(dx)
             x = x + dx
             if self.use_LN:
-                x = self.ffn_ln(x)   # ff layer norm (post)
+                x = self.ffn_ln(x)
+
             return x
 
 
