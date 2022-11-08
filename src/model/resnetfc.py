@@ -169,7 +169,7 @@ class RayTransformerBlock(nn.Module):
         nn.init.kaiming_normal_(self.ffn_fc1.weight, a=0, mode="fan_in")
 
         if use_LN:
-            self.att_ln = nn.LayerNorm(self.d_hidden)
+            # self.att_ln = nn.LayerNorm(self.d_hidden)
             self.ffn_ln = nn.LayerNorm(self.d_hidden)
         
 
@@ -195,8 +195,8 @@ class RayTransformerBlock(nn.Module):
             dx = self.points_att(x, x, x, need_weights=False)[0]
             x = x + dx
             x = (x[..., :self.d_hidden])
-            if self.use_LN:
-                x = self.att_ln(x)  # att layer norm (post)
+            # if self.use_LN:
+            #     x = self.att_ln(x)  # att layer norm (post)
             
             # feedforward
             x = x.reshape(-1, self.d_hidden)
