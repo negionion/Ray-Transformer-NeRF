@@ -1,4 +1,6 @@
-# pixelNeRF: Neural Radiance Fields from One or Few Images
+# Ray-Transformer NeRF: 3D Scene Reconstruction with Novel View Synthesis from Single Image Based on Ray-Transformer Neural Radiance Fields
+
+Based on: pixelNeRF: Neural Radiance Fields from One or Few Images
 
 Alex Yu, Vickie Ye, Matthew Tancik, Angjoo Kanazawa<br>
 UC Berkeley
